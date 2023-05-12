@@ -219,7 +219,8 @@ func (dir *Dir) FileFor(keyer tengo.ObjectKeyer) *SQLFile {
 		filePath = stmt.File
 	} else {
 		objName := keyer.ObjectKey().Name
-		filePath = PathForObject(dir.Path, NormalizeFileName(objName))
+		caseSensitive, _ := IsCaseSensitiveFilesystem(dir.Path)
+		filePath = PathForObject(dir.Path, NormalizeFileName(objName, !caseSensitive))
 	}
 
 	// No file yet at that path: return a new SQLFile, but no need to mark it
@@ -964,7 +965,8 @@ func sqlFiles(dirPath, repoBase string) (result []string, err error) {
 			// Note we intentionally use name, not destName, here. For symlinks we want
 			// to return the symlink, not the destination, since the destination could
 			// be in a different directory.
-			result = append(result, filepath.Join(dirPath, NormalizeFileName(name)))
+			caseSensitive, _ := IsCaseSensitiveFilesystem(dirPath)
+			result = append(result, filepath.Join(dirPath, NormalizeFileName(name, !caseSensitive)))
 		}
 	}
 	return result, nil
