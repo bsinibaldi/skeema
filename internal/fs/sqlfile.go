@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"unicode"
 
@@ -17,6 +16,59 @@ type SQLFile struct {
 	FilePath   string
 	Statements []*tengo.Statement
 	Dirty      bool
+}
+
+// IsCaseSensitive checks whether or not the file system is case-sensitive, instead of assuming it based on OS
+func IsCaseSensitiveFilesystem(dir string) (bool, error) {
+	alt := filepath.Join(filepath.Dir(dir), genCaseTestFilename(filepath.Base(dir)))
+
+	dInfo, err := os.Stat(dir)
+	if err != nil {
+		return false, fmt.Errorf("could not determine the case-sensitivity of the filesystem: %v", err)
+	}
+
+	aInfo, err := os.Stat(alt)
+	if err != nil {
+		// If the file doesn't exists, assume we are on a case-sensitive filesystem.
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+
+		return false, fmt.Errorf("could not determine the case-sensitivity of the filesystem: %v", err)
+	}
+
+	return !os.SameFile(dInfo, aInfo), nil
+}
+
+// genTestFilename returns a string with at most one rune case-flipped.
+//
+// The transformation is applied only to the first rune that can be
+// reversibly case-flipped, meaning:
+//
+// * A lowercase rune for which it's true that lower(upper(r)) == r
+// * An uppercase rune for which it's true that upper(lower(r)) == r
+//
+// All the other runes are left intact.
+func genCaseTestFilename(str string) string {
+	flip := true
+	return strings.Map(func(r rune) rune {
+		if flip {
+			if unicode.IsLower(r) {
+				u := unicode.ToUpper(r)
+				if unicode.ToLower(u) == r {
+					r = u
+					flip = false
+				}
+			} else if unicode.IsUpper(r) {
+				l := unicode.ToLower(r)
+				if unicode.ToUpper(l) == r {
+					r = l
+					flip = false
+				}
+			}
+		}
+		return r
+	}, str)
 }
 
 // FileName returns the file name of sqlFile without its directory path.
@@ -179,8 +231,8 @@ func (sqlFile *SQLFile) statementIndex(stmt *tengo.Statement) int {
 // traditionally have case-insensitive operating systems. This is intended for
 // use in string-keyed maps, to avoid the possibility of having multiple
 // distinct map keys which actually refer to the same file.
-func NormalizeFileName(name string) string {
-	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+func NormalizeFileName(name string, lowerCase bool) string {
+	if lowerCase {
 		return strings.ToLower(name)
 	}
 	return name
@@ -190,12 +242,12 @@ func NormalizeFileName(name string) string {
 // SQLFile representing the supplied object name. Special characters in the
 // objectName will be removed; however, there is no risk of "conflicts" since
 // a single SQLFile can store definitions for multiple objects.
-func FileNameForObject(objectName string) string {
+func FileNameForObject(objectName string, lowerCase bool) string {
 	objectName = strings.Map(removeSpecialChars, objectName)
 	if objectName == "" {
 		objectName = "symbols"
 	}
-	return NormalizeFileName(objectName) + ".sql"
+	return NormalizeFileName(objectName, lowerCase) + ".sql"
 }
 
 // PathForObject returns a string containing a path to use for the SQLFile
@@ -203,7 +255,8 @@ func FileNameForObject(objectName string) string {
 // will be removed; however, there is no risk of "conflicts" since a single
 // SQLFile can store definitions for multiple objects.
 func PathForObject(dirPath, objectName string) string {
-	return filepath.Join(dirPath, FileNameForObject(objectName))
+	caseSensitive, _ := IsCaseSensitiveFilesystem(dirPath)
+	return filepath.Join(dirPath, FileNameForObject(objectName, !caseSensitive))
 }
 
 func removeSpecialChars(r rune) rune {
